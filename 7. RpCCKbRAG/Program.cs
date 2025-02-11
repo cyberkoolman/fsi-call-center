@@ -61,7 +61,7 @@ kernel.ImportPluginFromObject(plugin, "memory");
 PromptExecutionSettings settings = new() { FunctionChoiceBehavior = FunctionChoiceBehavior.Auto() };
 
 // Search KernelMemory
-var input = "Who should I contact for customers shipping problems?";
+var input = "Who should I contact for guidelines on handling customers complains?";
 var searchResult = await kernelMemory.AskAsync(input);
 // var searchResult = await kernelMemory.SearchAsync(input);
 
