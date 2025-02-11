@@ -1,0 +1,58 @@
+{
+    "openapi": "3.0.1",
+    "info": {
+      "title": "FSI Contact Center PoC API",
+      "version": "v1"
+    },
+    "paths": {
+      "/Question": {
+        "post": {
+          "tags": [
+            "Question"
+          ],
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionRequest"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionRequest"
+                }
+              },
+              "application/*+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionRequest"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "OK"
+            }
+          }
+        }
+      }
+    },
+    "components": {
+      "schemas": {
+        "QuestionRequest": {
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string",
+              "nullable": true
+            },
+            "conversationId": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  }

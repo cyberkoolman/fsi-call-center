@@ -1,0 +1,10 @@
+@RpContactCenterApi_HostAddress = http://localhost:5108
+
+POST {{RpContactCenterApi_HostAddress}}/Question
+Content-Type: application/json
+
+{
+    "question": "How many calls were made in past 3 months?"
+}
+
+###
