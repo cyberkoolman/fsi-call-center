@@ -22,7 +22,7 @@ string deploymentChatName = configuration["AzureOpenAI:DeploymentChatName"];
 string endpoint = configuration["AzureOpenAI:Endpoint"];
 
 var kernelBuilder = Kernel.CreateBuilder();
-kernelBuilder.Services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Trace));
+// kernelBuilder.Services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Trace));
 kernelBuilder.AddAzureOpenAIChatCompletion(deploymentChatName, endpoint, apiKey);
 var kernel = kernelBuilder.Build();
 
