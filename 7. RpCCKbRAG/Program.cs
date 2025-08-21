@@ -62,6 +62,11 @@ PromptExecutionSettings settings = new() { FunctionChoiceBehavior = FunctionChoi
 
 // Search KernelMemory
 var input = "Who should I contact for guidelines on handling customers complains?";
+
+Console.WriteLine("--------------------------------------------------------------------------------");
+Console.WriteLine($"Asking for: {input}");
+Console.WriteLine("--------------------------------------------------------------------------------");
+
 var searchResult = await kernelMemory.AskAsync(input);
 // var searchResult = await kernelMemory.SearchAsync(input);
 

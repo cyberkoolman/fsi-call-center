@@ -1,1 +1,0 @@
-dotnet run "How many calls were ended with the better mood than the beginning?"

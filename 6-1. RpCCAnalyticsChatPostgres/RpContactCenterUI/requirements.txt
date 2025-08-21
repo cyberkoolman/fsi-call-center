@@ -1,4 +1,0 @@
-semantic-kernel
-streamlit
-openai
-python-decouple
