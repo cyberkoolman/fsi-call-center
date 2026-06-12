@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>RpCCKbRAG</RootNamespace>
+    <AssemblyName>RpCCKbRAG</AssemblyName>
+    <NoWarn>MAAI001</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Microsoft Agent Framework — workflows -->
+    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.10.0" />
+
+    <!-- Azure OpenAI (chat completions + embeddings) -->
+    <PackageReference Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
+    <PackageReference Include="Azure.Identity" Version="1.13.2" />
+
+    <!-- PDF text extraction -->
+    <PackageReference Include="UglyToad.PdfPig" Version="1.7.0-custom-5" />
+
+    <!-- Configuration -->
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="9.0.3" />
+  </ItemGroup>
+
+</Project>
