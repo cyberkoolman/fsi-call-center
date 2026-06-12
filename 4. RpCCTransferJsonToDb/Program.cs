@@ -1,64 +1,32 @@
-﻿using Microsoft.Extensions.Configuration;
 using System.Text.Json;
-using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Configuration;
+using RpCCTransferJsonToDb;
+using RpCCTransferJsonToDb.Configuration;
+using RpCCTransferJsonToDb.Services;
 
-if (args.Length > 0 && args[0].ToLower() == "generate")
+var config = new ConfigurationBuilder()
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+    .AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: false)
+    .Build();
+
+var settings = config.Get<AppSettings>()
+    ?? throw new InvalidOperationException("Failed to load appsettings.json.");
+
+var repository = new CallCenterRepository(settings);
+await repository.EnsureSchemaAsync();
+
+if (args.Length > 0 && args[0].Equals("generate", StringComparison.OrdinalIgnoreCase))
 {
-    Generator.Generate(args);
+    await Generator.RunAsync(args, repository);
     return;
 }
 
-string jsonFilePath = "./output.json";
-string jsonData = File.ReadAllText(jsonFilePath);
+var jsonFilePath = Path.Combine(AppContext.BaseDirectory, "output.json");
+var jsonData = await File.ReadAllTextAsync(jsonFilePath);
 
-// Deserialize JSON data to C# object
-CustomerIssue issue = JsonSerializer.Deserialize<CustomerIssue>(jsonData);
+var issue = JsonSerializer.Deserialize<CustomerIssue>(jsonData)
+    ?? throw new InvalidOperationException("Failed to parse output.json.");
 
-var configuration = new ConfigurationBuilder()
-                .AddJsonFile("appsettings.json")
-                .Build();
-
-SqlConnectionStringBuilder builder = new SqlConnectionStringBuilder();
-
-builder.DataSource = configuration["Database:Server"];
-builder.UserID = configuration["Database:UserId"];
-builder.Password = configuration["Database:Password"];
-builder.InitialCatalog = configuration["Database:InitialCatalog"];
-
-using (SqlConnection connection = new SqlConnection(builder.ConnectionString))
-{
-    connection.Open();       
-    string query = @"
-        INSERT INTO CustomerIssues (
-            ClassifiedReason, ResolveStatus, CallSummary, CustomerName, EmployeeName, OrderNumber, 
-            CustomerContactNr, NewAddress, SentimentInitial, SentimentFinal, SatisfactionScoreInitial, 
-            SatisfactionScoreFinal, Eta, ActionItem, CallDate
-        ) VALUES (
-            @ClassifiedReason, @ResolveStatus, @CallSummary, @CustomerName, @EmployeeName, @OrderNumber, 
-            @CustomerContactNr, @NewAddress, @SentimentInitial, @SentimentFinal, @SatisfactionScoreInitial, 
-            @SatisfactionScoreFinal, @Eta, @ActionItem, @CallDate
-        )";
-
-    using (SqlCommand command = new SqlCommand(query, connection))
-    {
-        command.Parameters.AddWithValue("@ClassifiedReason", issue.ClassifiedReason);
-        command.Parameters.AddWithValue("@ResolveStatus", issue.ResolveStatus);
-        command.Parameters.AddWithValue("@CallSummary", issue.CallSummary);
-        command.Parameters.AddWithValue("@CustomerName", issue.CustomerName);
-        command.Parameters.AddWithValue("@EmployeeName", issue.EmployeeName);
-        command.Parameters.AddWithValue("@OrderNumber", issue.OrderNumber);
-        command.Parameters.AddWithValue("@CustomerContactNr", issue.CustomerContactNr);
-        command.Parameters.AddWithValue("@NewAddress", issue.NewAddress);
-        command.Parameters.AddWithValue("@SentimentInitial", string.Join(",", issue.SentimentInitial));
-        command.Parameters.AddWithValue("@SentimentFinal", string.Join(",", issue.SentimentFinal));
-        command.Parameters.AddWithValue("@SatisfactionScoreInitial", issue.SatisfactionScoreInitial);
-        command.Parameters.AddWithValue("@SatisfactionScoreFinal", issue.SatisfactionScoreFinal);
-        command.Parameters.AddWithValue("@Eta", issue.Eta);
-        command.Parameters.AddWithValue("@ActionItem", string.Join(",", issue.ActionItem));
-        command.Parameters.AddWithValue("@CallDate", issue.CallDate);        
-
-        command.ExecuteNonQuery();
-    }
-}
-
-Console.WriteLine("Data inserted successfully.");
+await repository.InsertAsync(issue);
+Console.WriteLine($"Inserted 1 record from {jsonFilePath} into Call_Center.CustomerIssues.");
