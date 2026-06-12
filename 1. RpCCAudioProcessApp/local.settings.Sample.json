@@ -1,9 +1,12 @@
 {
     "IsEncrypted": false,
     "Values": {
-        "AzureWebJobsStorage": "DefaultEndpointsProtocol=https;AccountName={acountname};AccountKey={acountkey};EndpointSuffix=core.windows.net",
-        "FUNCTIONS_WORKER_RUNTIME": "dotnet",
-        "APPINSIGHTS_INSTRUMENTATIONKEY": "{app_insights_instrumentation_key}",
+        "AzureWebJobsStorage__blobServiceUri": "https://{storage_account_name}.blob.core.windows.net",
+        "AzureWebJobsStorage__queueServiceUri": "https://{storage_account_name}.queue.core.windows.net",
+        "AzureWebJobsStorage__tableServiceUri": "https://{storage_account_name}.table.core.windows.net",
+        "AzureWebJobsSecretStorageType": "files",
+        "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+        "APPLICATIONINSIGHTS_CONNECTION_STRING": "{app_insights_connection_string}",
         "SpeechToTextApiUrl": "{speech_to_text_api_url_from_azure_ai_foundry}",
         "SpeechToTextApiKey": "{speech_to_text_api_key_from_azure_ai_foundry}"
     }

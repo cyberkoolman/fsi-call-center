@@ -1,133 +1,133 @@
-using System;
-using System.IO;
-using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
-using System.Threading.Tasks;
-using Microsoft.Azure.WebJobs;
-using Microsoft.Extensions.Logging;
 using Microsoft.ApplicationInsights;
-using Microsoft.ApplicationInsights.Extensibility;
-using System.Collections.Generic;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Extensions.Logging;
 
-namespace RpCCAudioProcessApp
+namespace RpCCAudioProcessApp;
+
+public class CCAudioFileTriggerFunction
 {
-    public static class CCAudioFileTriggerFunction
+    private readonly ILogger<CCAudioFileTriggerFunction> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly TelemetryClient _telemetryClient;
+
+    public CCAudioFileTriggerFunction(
+        ILogger<CCAudioFileTriggerFunction> logger,
+        IHttpClientFactory httpClientFactory,
+        TelemetryClient telemetryClient)
     {
-        private static readonly HttpClient httpClient = new HttpClient();
-        private static readonly TelemetryClient telemetryClient = new TelemetryClient(TelemetryConfiguration.CreateDefault());
+        _logger = logger;
+        _httpClientFactory = httpClientFactory;
+        _telemetryClient = telemetryClient;
+    }
 
-        [FunctionName("CCAudioFileTriggerFunction")]
-        public static async Task Run(
-            [BlobTrigger("call-center/{name}", Connection = "AzureWebJobsStorage")] Stream myBlob, 
-            string name, 
-            ILogger log)        
+    [Function("CCAudioFileTriggerFunction")]
+    public async Task Run(
+        [BlobTrigger("call-center/{name}", Connection = "AzureWebJobsStorage")] Stream myBlob,
+        string name)
+    {
+        _logger.LogInformation("C# Blob trigger function processed blob. Name: {Name} Size: {Size} bytes", name, myBlob.Length);
+        _telemetryClient.TrackEvent("BlobProcessingStarted", new Dictionary<string, string>
         {
-            log.LogInformation($"C# Blob trigger function Processed blob\n Name:{name} \n Size: {myBlob.Length} Bytes");
-            telemetryClient.TrackEvent("BlobProcessingStarted", new Dictionary<string, string>
-            {
-                { "BlobName", name },
-                { "BlobSize", myBlob.Length.ToString() }
-            });
-            
-            // Read the URL and subscription key from environment variables
-            var apiUrl = Environment.GetEnvironmentVariable("SpeechToTextApiUrl");
-            var apiKey = Environment.GetEnvironmentVariable("SpeechToTextApiKey");
+            { "BlobName", name },
+            { "BlobSize", myBlob.Length.ToString() }
+        });
 
-            if (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey))
-            {
-                log.LogError("API URL or Subscription Key is not configured.");
-                throw new InvalidOperationException("API URL or Subscription Key is not configured.");
-            }
+        var apiUrl = Environment.GetEnvironmentVariable("SpeechToTextApiUrl");
+        var apiKey = Environment.GetEnvironmentVariable("SpeechToTextApiKey");
 
-            // Read the blob content
-            using (var memoryStream = new MemoryStream())
-            {
-                await myBlob.CopyToAsync(memoryStream);
-                var byteArrayContent = new ByteArrayContent(memoryStream.ToArray());
-                byteArrayContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/mpeg");
-
-            // Create the multipart form data content
-                var multipartContent = new MultipartFormDataContent();
-                multipartContent.Add(byteArrayContent, "audio", name);
-
-                // Add the JSON definition
-                var jsonDefinition = @"
-                {
-                    ""locales"": [""en-US""],
-                    ""profanityFilterMode"": ""Masked"",
-                    ""channels"": [0, 1]
-                }";
-                var stringContent = new StringContent(jsonDefinition);
-                stringContent.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-                multipartContent.Add(stringContent, "definition");
-
-                // Set up the HTTP request
-                var request = new HttpRequestMessage(HttpMethod.Post, apiUrl);
-                request.Headers.Add("Ocp-Apim-Subscription-Key", apiKey);
-                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-                request.Content = multipartContent;
-
-                // Send the HTTP POST request
-                var response = await httpClient.SendAsync(request);
-                if (response.IsSuccessStatusCode)
-                {
-                    var jsonResponse = await response.Content.ReadAsStringAsync();
-                    log.LogInformation("HTTP POST request was successful.");
-                    telemetryClient.TrackEvent("HttpPostSuccess", new Dictionary<string, string>
-                    {
-                        { "BlobName", name },
-                        { "ApiUrl", apiUrl }
-                    });
-
-                    // Extract conversation from JSON response
-                    var conversation = ExtractConversation(jsonResponse, log);
-                    log.LogInformation(conversation);
-                }
-                else
-                {
-                    log.LogError($"HTTP POST request failed with status code {response.StatusCode}.");
-                    var errorResponse = await response.Content.ReadAsStringAsync();
-                    log.LogError($"Error response: {errorResponse}");
-
-                    telemetryClient.TrackEvent("HttpPostFailure", new Dictionary<string, string>
-                    {
-                        { "BlobName", name },
-                        { "StatusCode", response.StatusCode.ToString() }
-                    });
-                }        
-            }
+        if (string.IsNullOrEmpty(apiUrl) || string.IsNullOrEmpty(apiKey))
+        {
+            _logger.LogError("API URL or Subscription Key is not configured.");
+            throw new InvalidOperationException("API URL or Subscription Key is not configured.");
         }
 
-        private static string ExtractConversation(string jsonResponse, ILogger log)
-        {
-            try
-            {
-                var jsonDocument = JsonDocument.Parse(jsonResponse);
-                var root = jsonDocument.RootElement;
-                var conversationText = "";
+        using var memoryStream = new MemoryStream();
+        await myBlob.CopyToAsync(memoryStream);
 
-                if (root.TryGetProperty("combinedPhrases", out JsonElement combinedPhrases))
+        var byteArrayContent = new ByteArrayContent(memoryStream.ToArray());
+        byteArrayContent.Headers.ContentType = new MediaTypeHeaderValue("audio/mpeg");
+
+        using var multipartContent = new MultipartFormDataContent
+        {
+            { byteArrayContent, "audio", name }
+        };
+
+        var jsonDefinition = """
+            {
+                "locales": ["en-US"],
+                "profanityFilterMode": "Masked",
+                "channels": [0, 1]
+            }
+            """;
+        var stringContent = new StringContent(jsonDefinition);
+        stringContent.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        multipartContent.Add(stringContent, "definition");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, apiUrl);
+        request.Headers.Add("Ocp-Apim-Subscription-Key", apiKey);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        request.Content = multipartContent;
+
+        var httpClient = _httpClientFactory.CreateClient("speech");
+        using var response = await httpClient.SendAsync(request);
+
+        if (response.IsSuccessStatusCode)
+        {
+            var jsonResponse = await response.Content.ReadAsStringAsync();
+            _logger.LogInformation("HTTP POST request was successful.");
+            _telemetryClient.TrackEvent("HttpPostSuccess", new Dictionary<string, string>
+            {
+                { "BlobName", name },
+                { "ApiUrl", apiUrl }
+            });
+
+            var conversation = ExtractConversation(jsonResponse);
+            _logger.LogInformation("{Conversation}", conversation);
+        }
+        else
+        {
+            _logger.LogError("HTTP POST request failed with status code {StatusCode}.", response.StatusCode);
+            var errorResponse = await response.Content.ReadAsStringAsync();
+            _logger.LogError("Error response: {Error}", errorResponse);
+
+            _telemetryClient.TrackEvent("HttpPostFailure", new Dictionary<string, string>
+            {
+                { "BlobName", name },
+                { "StatusCode", response.StatusCode.ToString() }
+            });
+        }
+    }
+
+    private string? ExtractConversation(string jsonResponse)
+    {
+        try
+        {
+            using var jsonDocument = JsonDocument.Parse(jsonResponse);
+            var root = jsonDocument.RootElement;
+            string? conversationText = null;
+
+            if (root.TryGetProperty("combinedPhrases", out var combinedPhrases))
+            {
+                foreach (var phrase in combinedPhrases.EnumerateArray())
                 {
-                    foreach (var phrase in combinedPhrases.EnumerateArray())
+                    if (phrase.TryGetProperty("text", out var textElement))
                     {
-                        if (phrase.TryGetProperty("text", out JsonElement textElement))
-                        {
-                            conversationText = textElement.GetString();
-                        }
+                        conversationText = textElement.GetString();
                     }
                 }
-                else
-                {
-                    log.LogWarning("No combinedPhrases found in the JSON response.");
-                }
-                return conversationText;
             }
-            catch (JsonException ex)
+            else
             {
-                log.LogError($"Failed to parse JSON response: {ex.Message}");
-                return null;
+                _logger.LogWarning("No combinedPhrases found in the JSON response.");
             }
-        }       
+            return conversationText;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError("Failed to parse JSON response: {Message}", ex.Message);
+            return null;
+        }
     }
 }
