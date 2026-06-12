@@ -3,8 +3,10 @@
 ##
 ## Get latest from `dotnet new gitignore`
 
-# Prod configuraiton file
-appsettings.json
+# Local-only (developer) settings file with real keys/secrets — NEVER commit
+appsettings.Local.json
+# But DO commit the public appsettings.json template (root .gitignore ignores it broadly)
+!appsettings.json
 
 # dotenv files
 .env
