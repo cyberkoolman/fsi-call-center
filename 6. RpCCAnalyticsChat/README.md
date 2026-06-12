@@ -114,7 +114,7 @@ If `ApiKey` is omitted, `DefaultAzureCredential` is used (works with
 ## Run it
 
 ```powershell
-cd "6. RpCCAnalyticsChat\RpContactCenterApi"
+cd "6. RpCCAnalyticsChat"
 dotnet run
 ```
 
