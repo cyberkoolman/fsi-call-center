@@ -52,9 +52,14 @@ appsettings(.Local).json ─┐
                     └── model returns final JSON with call_date filled in
 ```
 
-### The tool
+### The native function (tool)
 
-`Tools/TimeInformation.cs` — plain C# class, no SK attributes:
+A **native function** is just a plain C# method that runs inside this
+process — no HTTP, no plugin manifest, no separate service. The agent
+treats it as a callable "tool" and invokes it whenever the model decides
+the conversation needs the data the method returns.
+
+`Tools/TimeInformation.cs`:
 
 ```csharp
 public class TimeInformation
@@ -64,10 +69,46 @@ public class TimeInformation
 }
 ```
 
-`AIFunctionFactory.Create(timeInformation.GetCurrentUtcDate)` produces an
-`AITool` whose JSON schema is generated from the method signature and the
-`[Description]` attribute. The agent receives this tool, decides on its own
-when to call it, and `RunAsync` handles the round-trip transparently.
+Why it exists in this project:
+
+- The extraction prompt requires `call_date = today's date in UTC`.
+- An LLM has **no reliable notion of "today"** — its training cutoff is in
+  the past and even when it guesses, the value is non-deterministic.
+- Hard-coding the date in the prompt would make every run depend on
+  whoever last edited the system message; doing it in post-processing
+  would mean the agent's output is no longer self-contained JSON.
+- A native function pushes the responsibility to the only component that
+  actually knows the answer: the host process's clock.
+
+How MAF turns the C# method into a tool the model can call:
+
+1. `AIFunctionFactory.Create(timeInformation.GetCurrentUtcDate)` reflects
+   over the method and produces an `AITool`. The tool's name comes from
+   the method name, its description from `[Description(...)]`, and its
+   parameter schema from the method signature (none here).
+2. The list of `AITool`s is passed to `chatClient.AsAIAgent(..., tools)`,
+   which advertises them to the model on every turn.
+3. When the model emits a tool call for `GetCurrentUtcDate`,
+   `agent.RunAsync` intercepts it, invokes the C# delegate, feeds the
+   string result back into the conversation, and asks the model to
+   continue. The caller never sees the tool round-trip — only the final
+   `response.Text` containing the populated JSON.
+
+This is the MAF replacement for SK's `[KernelFunction]` +
+`kernelBuilder.Plugins.AddFromType<TimeInformation>()` +
+`FunctionChoiceBehavior.Auto()` — same idea, fewer moving parts.
+
+#### Adding more tools later
+
+Drop another method on any class, decorate it with `[Description]`, and
+add it to the `tools` array. Examples that will appear in later projects:
+
+- `LookupOrderStatus(string orderNumber)` — calls an internal API
+- `SearchKnowledgeBase(string query)` — queries Azure AI Search
+- `GetCustomerSentimentTrend(string customerId)` — runs a SQL query
+
+Each one stays a normal C# method; MAF handles the prompting and
+scheduling.
 
 ### The agent
 
