@@ -9,33 +9,23 @@ using System.Runtime.CompilerServices;
 namespace RpCCKbRAG.Api;
 
 /// <summary>
-/// IChatClient that wraps a RAG pipeline (agentic or one-shot). The workflow
-/// is built once at startup against the shared (already-populated) VectorStore;
-/// every chat turn submits the latest user message into the workflow and
+/// IChatClient that bridges DevUI to the ContosoKB MAF workflow.
+/// Each chat turn submits the latest user message into the workflow and
 /// streams the synthesised answer back to DevUI.
 /// </summary>
 public sealed class RagWorkflowChatClient : IChatClient
 {
-    private readonly bool _useOneShot;
     private readonly Microsoft.Agents.AI.Workflows.Workflow _workflow;
 
-    public RagWorkflowChatClient(
-        AppSettings        settings,
-        AzureAIService     ai,
-        VectorStore        store,
-        KnowledgeBaseState kbState,
-        bool               useOneShot)
+    public RagWorkflowChatClient(AppSettings settings, AzureAIService ai, VectorStore store)
     {
-        _useOneShot = useOneShot;
-        _workflow   = useOneShot
-            ? OneShotRagWorkflow.Build(ai, store, kbState, settings.Pipeline)
-            : AgenticRagWorkflow.Build(ai, store, kbState, settings.Pipeline);
+        _workflow = ContosoKbWorkflow.Build(ai, store, settings.Pipeline);
     }
 
     public ChatClientMetadata Metadata => new(
-        _useOneShot ? "OneShotRAG" : "AgenticRAG",
+        ContosoKbWorkflow.Name,
         providerUri: null,
-        defaultModelId: _useOneShot ? "oneshot-rag-pipeline" : "agentic-rag-pipeline");
+        defaultModelId: "contoso-kb");
 
     public async Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> chatMessages,
@@ -63,25 +53,10 @@ public sealed class RagWorkflowChatClient : IChatClient
             yield break;
         }
 
-        await foreach (var u in RunPipelineAsync(userText, ct))
-            yield return u;
-    }
-
-    public object? GetService(Type serviceType, object? key = null) => null;
-
-    public void Dispose() { }
-
-    // ── Pipeline execution ─────────────────────────────────────────────────
-
-    private async IAsyncEnumerable<ChatResponseUpdate> RunPipelineAsync(
-        string query,
-        [EnumeratorCancellation] CancellationToken ct)
-    {
-        var label = _useOneShot ? "One-Shot" : "Deep-Thinking";
-        Console.WriteLine($"\n[RAG] Query ({label}): {query}");
+        Console.WriteLine($"\n[ContosoKB] Query: {userText}");
 
         string? answer = null;
-        await using var run = await InProcessExecution.RunStreamingAsync(_workflow, new UserQuery(query));
+        await using var run = await InProcessExecution.RunStreamingAsync(_workflow, new UserQuery(userText));
 
         await foreach (var evt in run.WatchStreamAsync())
         {
@@ -92,10 +67,8 @@ public sealed class RagWorkflowChatClient : IChatClient
             }
         }
 
-        answer ??= "The research pipeline did not produce an answer.";
+        answer ??= "The knowledge base did not produce an answer.";
 
-        // Stream the final answer to DevUI sentence-by-sentence so the user
-        // sees progressive output rather than a single late blob.
         var sentences = answer.Split([". ", ".\n"], StringSplitOptions.None);
         for (int i = 0; i < sentences.Length; i++)
         {
@@ -109,6 +82,10 @@ public sealed class RagWorkflowChatClient : IChatClient
             await Task.Delay(25, ct);
         }
     }
+
+    public object? GetService(Type serviceType, object? key = null) => null;
+
+    public void Dispose() { }
 
     private static ChatResponseUpdate Text(string text) => new()
     {

@@ -3,8 +3,8 @@ using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.OpenAI;
 using RpCCKbRAG.Api;
 using RpCCKbRAG.Configuration;
-using RpCCKbRAG.Models;
 using RpCCKbRAG.Services;
+using RpCCKbRAG.Workflow;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 
@@ -23,22 +23,19 @@ if (string.IsNullOrWhiteSpace(settings.AzureAI.Endpoint))
 
 // ─── Build shared services ────────────────────────────────────────────────────
 
-var ai      = new AzureAIService(settings);
-var store   = new VectorStore();
-var loader  = new DocumentLoader(settings);
-var kbState = new KnowledgeBaseState();
+var ai     = new AzureAIService(settings);
+var store  = new VectorStore();
+var loader = new DocumentLoader(settings);
 
 // ─── Pre-load every PDF in Documents/ ─────────────────────────────────────────
 
 var docsFolder = Path.Combine(AppContext.BaseDirectory, settings.Knowledge.DocumentsFolder);
 if (!Directory.Exists(docsFolder))
-    throw new DirectoryNotFoundException(
-        $"Knowledge documents folder not found: {docsFolder}");
+    throw new DirectoryNotFoundException($"Knowledge documents folder not found: {docsFolder}");
 
 var pdfFiles = Directory.GetFiles(docsFolder, "*.pdf", SearchOption.AllDirectories);
 if (pdfFiles.Length == 0)
-    throw new InvalidOperationException(
-        $"No PDF files found under {docsFolder}.");
+    throw new InvalidOperationException($"No PDF files found under {docsFolder}.");
 
 var sources = pdfFiles
     .Select(p => new DocumentSource
@@ -54,33 +51,19 @@ Console.WriteLine(new string('═', 60));
 
 var allDocs = await loader.LoadAllAsync(sources, ai);
 store.AddDocuments(allDocs);
-foreach (var s in sources) kbState.AppendSource(s.Name);
-
-// Override description with the curated one from appsettings if present.
-if (!string.IsNullOrWhiteSpace(settings.Knowledge.Description))
-    kbState.Description = settings.Knowledge.Description;
 
 Console.WriteLine($"  → Indexed {store.DocumentCount} chunks across {sources.Count} document(s).");
 
-// ─── Register both pipelines as DevUI agents ──────────────────────────────────
+// ─── Register the ContosoKB agent ─────────────────────────────────────────────
 
-var agenticClient = new RagWorkflowChatClient(settings, ai, store, kbState, useOneShot: false);
-var oneShotClient = new RagWorkflowChatClient(settings, ai, store, kbState, useOneShot: true);
-
-builder.AddAIAgent(
-    name:         "KbRAG-DeepThink",
-    instructions: "You are a deep-thinking Contoso call-center knowledge-base assistant. " +
-                  "You decompose complex questions into a multi-step research plan, retrieve " +
-                  "and reflect iteratively over the indexed support guidelines and employee " +
-                  "handbook, and synthesise a comprehensive cited answer.",
-    chatClient:   agenticClient);
+var chatClient = new RagWorkflowChatClient(settings, ai, store);
 
 builder.AddAIAgent(
-    name:         "KbRAG-OneShot",
-    instructions: "You are a simple Contoso call-center knowledge-base assistant. " +
-                  "You retrieve relevant passages from the indexed PDFs and answer " +
-                  "in a single pass, with no planning or reflection.",
-    chatClient:   oneShotClient);
+    name:         ContosoKbWorkflow.Name,
+    instructions: "You are the Contoso call-center knowledge-base assistant. " +
+                  "You retrieve relevant passages from the indexed support guidelines " +
+                  "and employee handbook, then answer with inline citations.",
+    chatClient:   chatClient);
 
 // ─── DevUI services ───────────────────────────────────────────────────────────
 
@@ -95,7 +78,7 @@ app.MapOpenAIConversations();
 app.MapDevUI();
 
 Console.WriteLine(new string('═', 60));
-Console.WriteLine("  RpCCKbRAG  —  DevUI");
+Console.WriteLine("  RpCCKbRAG  —  ContosoKB DevUI");
 Console.WriteLine("  http://localhost:8888/devui");
 Console.WriteLine(new string('═', 60));
 

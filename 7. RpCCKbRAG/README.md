@@ -1,10 +1,29 @@
-# 7. RpCCKbRAG — Knowledge-Base RAG (MAF Workflows + DevUI)
+# 7. RpCCKbRAG — ContosoKB (simplest RAG with MAF Workflows + DevUI)
 
-Agentic retrieval-augmented Q&A over the Contoso Tech-Support and Employee-Handbook PDFs, hosted in the Microsoft Agent Framework DevUI.
+A minimal Retrieval-Augmented-Generation agent over the Contoso Tech-Support
+Guidelines and Employee Handbook PDFs, hosted as a single DevUI agent named
+**`ContosoKB`**.
 
 ## What this replaces
 
-The previous version was a single-shot console app built on **Semantic Kernel + Kernel Memory** that ingested two PDFs and answered one hardcoded question. It has been rewritten as a **.NET 9 + Microsoft Agent Framework 1.10** solution exposing **two RAG pipelines** as DevUI agents.
+The original project was a console app built on **Semantic Kernel + Kernel
+Memory** that ingested two PDFs and answered one hardcoded question. It is now
+a **.NET 9 + Microsoft Agent Framework 1.10** workflow.
+
+## The pipeline
+
+The simplest possible RAG topology — two executors, one edge:
+
+```
+UserQuery ──► [VectorSearch] ──► [Answer] ──► output
+```
+
+* **VectorSearch** — embeds the user query with `text-embedding-3-large`,
+  pulls the top-K most similar chunks from the in-memory `VectorStore`.
+* **Answer** — formats those chunks into a grounded prompt, calls the chat
+  model, returns the answer with inline `[Source — Section]` citations.
+
+No planner, no rewriter, no reranker, no reflection, no loop.
 
 ## Layout
 
@@ -13,80 +32,46 @@ The previous version was a single-shot console app built on **Semantic Kernel + 
 ├── Documents/                          # PDFs preloaded at startup
 │   ├── Contoso_Tech_Support_Guidelines.pdf
 │   └── employee_handbook.pdf
-├── RpCCKbRAG/                          # Library: workflow, executors, services
-│   ├── Configuration/    AppSettings  (Azure OpenAI, pipeline, knowledge)
-│   ├── Models/           RagState, ResearchPlan, WorkflowMessages, ...
-│   ├── Services/         AzureAIService, VectorStore, DocumentLoader (PdfPig)
-│   ├── Executors/        Planner, QueryRewriter, VectorSearch, Reranker,
-│   │                     Distiller, Reflection, Policy, Synthesis, OneShotAnswer
-│   └── Workflow/         AgenticRagWorkflow, OneShotRagWorkflow
+├── RpCCKbRAG/                          # Library
+│   ├── Configuration/  AppSettings (AzureAI, Pipeline, Knowledge)
+│   ├── Models/         RagDocument, WorkflowMessages
+│   ├── Services/       AzureAIService, VectorStore, DocumentLoader (PdfPig)
+│   ├── Executors/      VectorSearchExecutor, AnswerExecutor
+│   └── Workflow/       ContosoKbWorkflow
 └── RpCCKbRAG.Api/                      # ASP.NET Core host serving DevUI
-    ├── Program.cs                      # Indexes PDFs, registers two agents
+    ├── Program.cs                      # Indexes PDFs, registers ContosoKB agent
     ├── RagWorkflowChatClient.cs        # IChatClient → MAF Workflow bridge
     └── appsettings.json / .Local.json  # AOAI endpoint + deployments
 ```
 
-## Two pipelines
-
-Both pipelines are MAF `Workflow`s built with `WorkflowBuilder` and executed via
-`InProcessExecution.RunStreamingAsync(...)`. They share the same in-memory
-`VectorStore` (cosine sim over `text-embedding-3-large`).
-
-### `KbRAG-OneShot` — fast, single-pass
-
-```
-UserQuery → QueryBridge → VectorSearch → OneShotAnswer
-```
-
-One vector search, one LLM call, citations. ~1–3 s per turn. Use for routine
-look-ups ("What's the warranty escalation step?").
-
-### `KbRAG-DeepThink` — agentic, multi-iteration
-
-```
-UserQuery → Planner → QueryRewriter → VectorSearch → Reranker
-         → Distiller → Reflection → Policy ─┐
-                                            ├─► (loop back to Planner)
-                                            └─► Synthesis
-```
-
-The Planner decomposes the question into research steps. After each retrieval
-round a Reflection executor scores coverage and gaps; a Policy executor decides
-whether to keep iterating (max 10 iterations) or hand off to Synthesis. Use for
-multi-hop questions that require combining facts across both PDFs.
-
-The flow is purely **vector-only** — there is no web search component (this
-application's knowledge is fixed to the indexed PDFs).
-
 ## Microsoft Agent Framework usage
 
-| MAF surface | Where it is used |
+| Surface | Where |
 |---|---|
-| `Microsoft.Agents.AI.Workflows`   | Both pipelines are `Workflow` graphs. `Executor<TIn>` / `Executor<TIn,TOut>` types are the nodes; `WorkflowBuilder.AddEdge` wires them. |
-| `IWorkflowContext`                | Shared scratchpad — every executor reads/writes `RagState` via `QueueStateUpdateAsync` / `ReadStateAsync` under scope `"rag"`. |
-| `WorkflowOutputEvent`             | Synthesis / OneShotAnswer signal completion by yielding the final answer string; the API host pulls it out of `WatchStreamAsync()` and streams it to the UI. |
-| `Microsoft.Agents.AI.Hosting.OpenAI` | Exposes the workflows as OpenAI-compatible `/v1/responses` agents — the same protocol Project #6 uses. |
-| `Microsoft.Agents.AI.DevUI`       | Browser UI at `/devui` for chatting with both agents. |
+| `Microsoft.Agents.AI.Workflows` | The pipeline is a `Workflow` built with `WorkflowBuilder`. `Executor<TIn>` types are the nodes. |
+| `WorkflowOutputEvent` | `AnswerExecutor` calls `YieldOutputAsync` with the final answer string. |
+| `Microsoft.Agents.AI.Hosting.OpenAI` | Exposes the workflow as an OpenAI-compatible `/v1/responses` agent. |
+| `Microsoft.Agents.AI.DevUI` | Browser UI at `/devui` for chatting with `ContosoKB`. |
 
-The `RagWorkflowChatClient` is a thin `IChatClient` wrapper: each chat turn
-calls `InProcessExecution.RunStreamingAsync(workflow, new UserQuery(text))`,
-watches the event stream for the terminal `WorkflowOutputEvent`, and streams
-the resulting string back to DevUI.
+`RagWorkflowChatClient` is a thin `IChatClient` wrapper: each chat turn calls
+`InProcessExecution.RunStreamingAsync(workflow, new UserQuery(text))`, watches
+the event stream for the terminal `WorkflowOutputEvent`, and streams the
+answer back to DevUI.
 
 ## Document indexing
 
-`DocumentLoader` (custom, built on **UglyToad.PdfPig**) extracts each PDF page,
+`DocumentLoader` (built on **UglyToad.PdfPig**) extracts each PDF page,
 inserts page markers, chunks at ~500 tokens with 50-token overlap, and embeds
 each chunk via `text-embedding-3-large`. Citations track the originating page
 number so answers cite `[Document — page N]`.
 
-Indexing happens **once at startup** in `Program.cs`. With the two seed PDFs
-this produces ≈15 chunks total (6 + 9).
+Indexing happens **once at startup** in `Program.cs` (≈15 chunks across the
+two seed PDFs).
 
 ## Running locally
 
 1. Edit `RpCCKbRAG.Api/appsettings.Local.json` with your Azure OpenAI endpoint,
-   API key, chat deployment(s) (`gpt-4o`), and embedding deployment
+   API key, chat deployment (`gpt-4o`), and embedding deployment
    (`text-embedding-3-large`).
 
 2. Run:
@@ -96,31 +81,24 @@ this produces ≈15 chunks total (6 + 9).
    dotnet run
    ```
 
-3. Open <http://localhost:8888/devui> and pick `KbRAG-OneShot` or
-   `KbRAG-DeepThink` from the agent dropdown.
+3. Open <http://localhost:8888/devui>, pick **`ContosoKB`** from the agent
+   dropdown, and ask questions.
 
 ### Sample questions
 
-| Pipeline | Question |
-|---|---|
-| OneShot   | What guidelines exist for handling angry customers? |
-| OneShot   | What does the handbook say about remote work? |
-| DeepThink | What is the escalation path for a damaged-package complaint, and which supervisor approval is required? |
-| DeepThink | Compare the customer-complaint procedure with the employee grievance procedure — what do they have in common? |
+* What guidelines exist for handling angry customers?
+* What does Contoso say about de-escalation techniques?
+* What is the warranty policy for damaged products?
+* What does the employee handbook say about remote work?
+* What are the working hours described in the handbook?
+* What is the escalation path for a damaged-package complaint?
 
-## Configuration knobs
+## Configuration
 
 `RpCCKbRAG/Configuration/AppSettings.cs`:
 
-* `AzureAI.ReasoningModel` — chat deployment used for Planner / Reflection / Synthesis (default `gpt-4o`)
-* `AzureAI.FastModel`      — chat deployment used for query rewrite / strategy choice (default `gpt-4o`)
+* `AzureAI.ChatModel` — chat deployment (default `gpt-4o`)
 * `AzureAI.EmbeddingModel` — embedding deployment (default `text-embedding-3-large`)
-* `Pipeline.MaxIterations` — agentic loop cap (default 3)
-* `Pipeline.TopKRetrieval` / `TopKRerank` — retrieval/rerank breadth
+* `Pipeline.ChunkSize` / `ChunkOverlap` — chunking tuning
+* `Pipeline.TopK` — number of chunks retrieved per query (default 5)
 * `Knowledge.DocumentsFolder` — folder relative to the API binary to index (default `Documents`)
-
-## Reference
-
-Inspired by `Agentic.RAG` (sibling repo) — the executor/workflow pattern is the
-same; this project drops Tavily/web-search and is themed for the Contoso
-call-center knowledge base.

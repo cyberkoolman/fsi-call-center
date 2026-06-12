@@ -2,26 +2,23 @@ namespace RpCCKbRAG.Configuration;
 
 public class AppSettings
 {
-    public AzureAISettings AzureAI { get; set; } = new();
-    public PipelineSettings Pipeline { get; set; } = new();
+    public AzureAISettings   AzureAI   { get; set; } = new();
+    public PipelineSettings  Pipeline  { get; set; } = new();
     public KnowledgeSettings Knowledge { get; set; } = new();
 }
 
 public class AzureAISettings
 {
-    /// <summary>Azure AI Foundry or Azure OpenAI endpoint URL.</summary>
+    /// <summary>Azure OpenAI endpoint URL.</summary>
     public string Endpoint { get; set; } = "";
 
-    /// <summary>API key for the endpoint. Leave empty to use DefaultAzureCredential.</summary>
+    /// <summary>API key. Leave empty to use DefaultAzureCredential.</summary>
     public string ApiKey { get; set; } = "";
 
-    /// <summary>Deployment name for the high-capability model (planning, policy, synthesis).</summary>
-    public string ReasoningModel { get; set; } = "gpt-4o";
+    /// <summary>Chat deployment name used to synthesise the final answer.</summary>
+    public string ChatModel { get; set; } = "gpt-4o";
 
-    /// <summary>Deployment name for the fast model (rewriting, reranking, distillation, reflection).</summary>
-    public string FastModel { get; set; } = "gpt-4o-mini";
-
-    /// <summary>Deployment name for the text embedding model.</summary>
+    /// <summary>Embedding deployment name used to vectorise chunks and queries.</summary>
     public string EmbeddingModel { get; set; } = "text-embedding-3-large";
 }
 
@@ -33,40 +30,24 @@ public class PipelineSettings
     /// <summary>Token overlap between consecutive chunks.</summary>
     public int ChunkOverlap { get; set; } = 50;
 
-    /// <summary>Number of documents to retrieve before reranking.</summary>
-    public int InitialRetrievalTopK { get; set; } = 10;
-
-    /// <summary>Number of documents to keep after reranking.</summary>
-    public int RerankerTopK { get; set; } = 3;
-
-    /// <summary>Safety cap on research iterations to prevent infinite loops.</summary>
-    public int MaxIterations { get; set; } = 10;
+    /// <summary>Number of chunks to retrieve per query.</summary>
+    public int TopK { get; set; } = 5;
 }
 
 public class KnowledgeSettings
 {
     /// <summary>
     /// Folder (relative to AppContext.BaseDirectory) containing the PDF
-    /// knowledge base documents. Every *.pdf in this folder is loaded at startup.
+    /// knowledge base. Every *.pdf in the folder is loaded at startup.
     /// </summary>
     public string DocumentsFolder { get; set; } = "Documents";
-
-    /// <summary>
-    /// Short human-readable description of what the corpus contains.
-    /// Surfaced to the Planner so it knows what `search_docs` covers.
-    /// </summary>
-    public string Description { get; set; } =
-        "Contoso call-center support guidelines and the Contoso employee handbook";
 }
 
 public class DocumentSource
 {
-    /// <summary>Human-readable name used in citations (e.g. "Tech Support Guidelines").</summary>
+    /// <summary>Human-readable name used in citations.</summary>
     public string Name { get; set; } = "";
 
     /// <summary>Local file path of the document.</summary>
     public string FilePath { get; set; } = "";
-
-    /// <summary>Optional short description passed to the Planner.</summary>
-    public string Description { get; set; } = "";
 }
