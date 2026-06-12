@@ -1,1 +1,2 @@
-dotnet run "How many calls were ended with the better mood than the beginning?"
+@echo on
+dotnet run -- "How many calls ended with a better mood than at the beginning?"

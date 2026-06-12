@@ -1,46 +1,68 @@
-﻿using Microsoft.Extensions.Configuration;
-using Microsoft.SemanticKernel;
-using Microsoft.SemanticKernel.ChatCompletion;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using Microsoft.SemanticKernel.Connectors.AzureOpenAI;
-using Microsoft.SemanticKernel.Connectors.OpenAI;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
+using RpCCAnalyticsConsole.Configuration;
+using RpCCAnalyticsConsole.Services;
+using RpCCAnalyticsConsole.Tools;
+
+Console.OutputEncoding = System.Text.Encoding.UTF8;
 
 if (args.Length == 0)
 {
-    Console.WriteLine("Please provide a question as an argument.");
+    Console.WriteLine("Usage: dotnet run -- \"<your question>\"");
     return;
 }
+var question = string.Join(' ', args);
 
-string question = args[0];
+var config = new ConfigurationBuilder()
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+    .AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: false)
+    .Build();
 
-var configuration = new ConfigurationBuilder()
-                        .AddJsonFile("appsettings.json")
-                        .Build();
-string apiKey = configuration["AzureOpenAI:ApiKey"];
-string deploymentChatName = configuration["AzureOpenAI:DeploymentChatName"];
-string endpoint = configuration["AzureOpenAI:Endpoint"];
+var settings = config.Get<AppSettings>()
+    ?? throw new InvalidOperationException("Failed to load appsettings.json.");
 
-var kernelBuilder = Kernel.CreateBuilder();
-kernelBuilder.Services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Trace));
-kernelBuilder.AddAzureOpenAIChatCompletion(deploymentChatName, endpoint, apiKey);
-var kernel = kernelBuilder.Build();
+if (string.IsNullOrWhiteSpace(settings.AzureAI.Endpoint))
+    throw new InvalidOperationException("AzureAI:Endpoint is not configured.");
 
-// Step 2: Import a Plugin to the kernel
-var nsqPluginDirectoryPath = Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Plugins", "NlpToSqlPlugin");
-kernel.ImportPluginFromPromptDirectory(nsqPluginDirectoryPath);
-kernel.ImportPluginFromType<QueryDbPlugin>();
+var aiService = new AzureAIService(settings);
+var queryTool = new QueryDbTool(settings);
 
-// Step 3: Enable function calling
-PromptExecutionSettings settings = new() { FunctionChoiceBehavior = FunctionChoiceBehavior.Auto() };
+var instructionsPath = Path.Combine(AppContext.BaseDirectory, "Prompts", "AnalyticsAgent.md");
+var instructions = await File.ReadAllTextAsync(instructionsPath);
 
+AITool[] tools =
+[
+    AIFunctionFactory.Create(queryTool.ExecuteSqlAsync)
+];
 
-IChatCompletionService chatCompletionService = kernel.GetRequiredService<IChatCompletionService>();
-ChatHistory chatHistory = [];
-// var input = "I want to know how many transactions in the last 3 months";
-var input = question;
-chatHistory.AddUserMessage(input);
+AIAgent agent = aiService.CreateAgent(
+    instructions: instructions,
+    name: "CallCenterAnalyticsAgent",
+    tools: tools);
 
-var response = await chatCompletionService.GetChatMessageContentAsync(chatHistory, settings, kernel);
-Console.WriteLine("Answer:\n");
-Console.WriteLine(response);
+Console.WriteLine(new string('═', 80));
+Console.WriteLine("  RpCCAnalyticsConsole  |  NL → SQL → Answer  |  Microsoft Agent Framework");
+Console.WriteLine(new string('═', 80));
+Console.WriteLine($"  Endpoint   : {settings.AzureAI.Endpoint}");
+Console.WriteLine($"  Chat model : {settings.AzureAI.ChatModel}");
+Console.WriteLine($"  Database   : {SafeDbName(settings.ConnectionStrings.CallCenter)}");
+Console.WriteLine($"  Question   : {question}");
+Console.WriteLine(new string('─', 80));
+
+var response = await agent.RunAsync(question);
+
+Console.WriteLine();
+Console.WriteLine("───[ Answer ]───────────────────────────────────────────────");
+Console.WriteLine(response.Text);
+
+static string SafeDbName(string cs)
+{
+    try
+    {
+        var b = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(cs);
+        return $"{b.DataSource}/{b.InitialCatalog}";
+    }
+    catch { return "(unparseable)"; }
+}
