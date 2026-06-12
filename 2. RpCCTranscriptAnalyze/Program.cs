@@ -1,52 +1,58 @@
-﻿using Microsoft.Extensions.Configuration;
-using Microsoft.SemanticKernel;
-using Microsoft.SemanticKernel.ChatCompletion;
-using Microsoft.SemanticKernel.Connectors.OpenAI;
-using Microsoft.SemanticKernel.TemplateEngine;
+using Microsoft.Extensions.Configuration;
+using RpCCTranscriptAnalyze.Configuration;
+using RpCCTranscriptAnalyze.Services;
 
-var configuration = new ConfigurationBuilder()
-                        .AddJsonFile("appsettings.json")
-                        .Build();
-string apiKey = configuration["AzureOpenAI:ApiKey"];
-string deploymentChatName = configuration["AzureOpenAI:DeploymentChatName"];
-string endpoint = configuration["AzureOpenAI:Endpoint"];
+Console.OutputEncoding = System.Text.Encoding.UTF8;
 
-// Step 1: Create a kernel with Azure OpenAI Chat Completion service
-var kernel = Kernel.CreateBuilder()
-    .AddAzureOpenAIChatCompletion(deploymentChatName, endpoint, apiKey)
+var config = new ConfigurationBuilder()
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+    .AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: false)
     .Build();
 
-string filePath = "./input.txt";
-var input = File.ReadAllText(filePath);
+var settings = config.Get<AppSettings>()
+    ?? throw new InvalidOperationException("Failed to load appsettings.json.");
 
-// Step 2: Define and Configure Inline Prompt and a sample input text
-string promptString = """
-{{$input}}
+if (string.IsNullOrWhiteSpace(settings.AzureAI.Endpoint))
+    throw new InvalidOperationException("AzureAI:Endpoint is not configured.");
 
-Above is a customer call transcription between customer call employee at Contoso Services and a customer. Extract the following information:
+var aiService = new AzureAIService(settings);
 
-- Classified reason for contact (can be one of "broken_item", "damaged_package", "lost_package", "late_package", "address_change", "new_package_request")
-- Is the problem resolved? (can be one of "resolved", "unresolved")
-- Call summary (in max 100 characters)
-- Name of customer
-- Name of call center employee
-- Customer order number
-- Customer contact information (if not mentioned, then "N/A")
-- New customer address (if the call reason is to change address, else "N/A")
-- Customer's sentiment in the beginning of the call (can be one or more of "calm", "complaining", "angry", "frustrated", "unhappy", "neutral", "happy")
-- Customer's sentiment in the end of the call (can be one or more of "calm", "complaining", "angry", "frustrated", "unhappy", "neutral", "happy")
-- How satisfied is the customer in the beginning of the call, 0 being very unsatisfied and 10 being very satisfied
-- How satisfied is the customer in the end of the call, 0 being very unsatisfied and 10 being very satisfied
-- Estimated time of arrival of package
-- Action item (can be one or more of "no_action", "track_package", "inquire_package_status", "make_address_change", "cancel_order", "contact_customer)
-- Call date (just enter today)
+string filePath = Path.Combine(AppContext.BaseDirectory, "input.txt");
+var transcript = await File.ReadAllTextAsync(filePath);
 
-If customer is satisfied in the end, there is no follow up needed. Else, follow up with the relevant internal department to check the status.
+const string systemPrompt = """
+    You analyze customer call transcripts between Contoso Services employees and customers.
 
-Extract JSON with keys classified_reason, resolve_status, call_summary, customer_name, employee_name, order_number, customer_contact_nr, new_address, sentiment_initial, sentiment_final, satisfaction_score_initial, satisfaction_score_final, eta, action_item, call_date.
-""";
+    Extract the following fields and return ONLY a single JSON object with these exact keys:
 
-// Step 3: Simpler way using all default paraemter
-var summaryResult = await kernel.InvokePromptAsync(promptString, new() { ["input"] = input });
+    - classified_reason           : one of "broken_item", "damaged_package", "lost_package", "late_package", "address_change", "new_package_request"
+    - resolve_status              : "resolved" or "unresolved"
+    - call_summary                : max 100 characters
+    - customer_name
+    - employee_name
+    - order_number
+    - customer_contact_nr         : "N/A" if not mentioned
+    - new_address                 : "N/A" unless the call reason is an address change
+    - sentiment_initial           : one or more of "calm", "complaining", "angry", "frustrated", "unhappy", "neutral", "happy"
+    - sentiment_final             : one or more of the same set
+    - satisfaction_score_initial  : integer 0 (very unsatisfied) - 10 (very satisfied)
+    - satisfaction_score_final    : integer 0 - 10
+    - eta                         : estimated time of arrival, or "N/A"
+    - action_item                 : one or more of "no_action", "track_package", "inquire_package_status", "make_address_change", "cancel_order", "contact_customer"
+    - call_date                   : today's date in YYYY-MM-DD
 
-Console.WriteLine(summaryResult);
+    If the customer is satisfied at the end, no follow-up is needed; otherwise note the follow-up in the action_item field.
+    """;
+
+Console.WriteLine(new string('═', 80));
+Console.WriteLine("  RpCCTranscriptAnalyze  |  Azure AI Foundry (gpt-4o)  |  Microsoft Agent Framework");
+Console.WriteLine(new string('═', 80));
+Console.WriteLine($"  Endpoint    : {settings.AzureAI.Endpoint}");
+Console.WriteLine($"  Chat model  : {settings.AzureAI.ChatModel}");
+Console.WriteLine($"  Transcript  : {filePath}  ({transcript.Length} chars)");
+Console.WriteLine(new string('─', 80));
+
+var json = await aiService.CompleteAsync(systemPrompt, transcript);
+
+Console.WriteLine(json);
