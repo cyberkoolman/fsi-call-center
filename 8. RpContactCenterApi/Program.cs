@@ -1,98 +1,100 @@
-using Microsoft.KernelMemory;
-using Microsoft.OpenApi.Models;
-using Microsoft.SemanticKernel;
+using Microsoft.Agents.AI.DevUI;
+using Microsoft.Agents.AI.Hosting;
+using Microsoft.Agents.AI.Hosting.OpenAI;
+using Microsoft.Extensions.AI;
+using RpContactCenterApi.Configuration;
+using RpContactCenterApi.Services;
+using RpContactCenterApi.Tools;
+
+Console.OutputEncoding = System.Text.Encoding.UTF8;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Load configuration from appsettings.json
-builder.Configuration.AddJsonFile("appsettings.json");
+builder.Configuration
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json",       optional: false, reloadOnChange: false)
+    .AddJsonFile("appsettings.Local.json", optional: true,  reloadOnChange: false);
 
-// Add services to the container
-builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(c =>
-{
-    c.SwaggerDoc("v1", new OpenApiInfo { Title = "FSI Contact Center PoC API", Version = "v1" });
-});
+var settings = builder.Configuration.Get<AppSettings>()
+    ?? throw new InvalidOperationException("Failed to load appsettings.json.");
 
-builder.Services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Trace));
+if (string.IsNullOrWhiteSpace(settings.AzureAI.Endpoint))
+    throw new InvalidOperationException("AzureAI:Endpoint is not configured.");
+if (string.IsNullOrWhiteSpace(settings.ConnectionStrings.CallCenter))
+    throw new InvalidOperationException("ConnectionStrings:CallCenter is not configured.");
 
-// Build the kernel
-var configuration = builder.Configuration;
-string apiKey = configuration["AzureOpenAI:ApiKey"];
-string deploymentChatName = configuration["AzureOpenAI:DeploymentChatName"];
-string deploymentEmbbedding = configuration["AzureOpenAI:DeploymentEmbeddingName"];
-string endpoint = configuration["AzureOpenAI:Endpoint"];
+// ─── Build shared services ────────────────────────────────────────────────────
 
-// Setting up Kernel Memory
-var embeddingConfig = new AzureOpenAIConfig
-{
-    APIKey = apiKey,
-    Deployment = deploymentEmbbedding,
-    Endpoint = endpoint,
-    APIType = AzureOpenAIConfig.APITypes.EmbeddingGeneration,
-    Auth = AzureOpenAIConfig.AuthTypes.APIKey
-};
-var chatConfig = new AzureOpenAIConfig
-{
-    APIKey = apiKey,
-    Deployment = deploymentChatName,
-    Endpoint = endpoint,
-    APIType = AzureOpenAIConfig.APITypes.ChatCompletion,
-    Auth = AzureOpenAIConfig.AuthTypes.APIKey
-};
+var ai     = new AzureAIService(settings);
+var store  = new VectorStore();
+var loader = new DocumentLoader(settings);
 
-var kernelMemory = new KernelMemoryBuilder()
-    .WithAzureOpenAITextGeneration(chatConfig)
-    .WithAzureOpenAITextEmbeddingGeneration(embeddingConfig)
-    .WithSimpleVectorDb()
-    .Build<MemoryServerless>();
+// ─── Pre-load every PDF in Documents/ ─────────────────────────────────────────
 
-// Import documents
-var documentsDirectory = Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Documents");
-var documentFiles = Directory.GetFiles(documentsDirectory);
+var docsFolder = Path.Combine(AppContext.BaseDirectory, settings.Knowledge.DocumentsFolder);
+if (!Directory.Exists(docsFolder))
+    throw new DirectoryNotFoundException($"Knowledge documents folder not found: {docsFolder}");
 
-foreach (var documentFile in documentFiles)
-{
-    await kernelMemory.ImportDocumentAsync(documentFile);
-}
+var pdfFiles = Directory.GetFiles(docsFolder, "*.pdf", SearchOption.AllDirectories);
+if (pdfFiles.Length == 0)
+    throw new InvalidOperationException($"No PDF files found under {docsFolder}.");
 
-// Register RAGPlugin with kernelMemory
-builder.Services.AddSingleton<IKernelMemory>(kernelMemory);
+var sources = pdfFiles
+    .Select(p => new DocumentSource
+    {
+        Name     = Path.GetFileNameWithoutExtension(p).Replace('_', ' '),
+        FilePath = p,
+    })
+    .ToList();
 
-var kernelBuilder = Kernel.CreateBuilder();
-kernelBuilder.Services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Trace));
-kernelBuilder.AddAzureOpenAIChatCompletion(deploymentChatName, endpoint, apiKey);
-var kernel = kernelBuilder.Build();
+Console.WriteLine(new string('═', 60));
+Console.WriteLine($"  Indexing {sources.Count} PDF document(s) from {docsFolder}");
+Console.WriteLine(new string('═', 60));
 
-// Import Plugin for accessing Database
-var nsqPluginDirectoryPath = Path.Combine(Directory.GetCurrentDirectory(), "Plugins", "NlpToSqlPlugin");
-kernel.ImportPluginFromPromptDirectory(nsqPluginDirectoryPath);
-kernel.ImportPluginFromType<QueryDbPlugin>();
+var allDocs = await loader.LoadAllAsync(sources, ai);
+store.AddDocuments(allDocs);
 
-// Integrate a Kernel with the RAG Memory
-// var ragPlugin = new MemoryPlugin(kernelMemory, waitForIngestionToComplete: true);
-var ragPlugin = new RAGPlugin(kernelMemory);
-kernel.ImportPluginFromObject(ragPlugin);
+Console.WriteLine($"  → Indexed {store.DocumentCount} chunks across {sources.Count} document(s).");
 
-// Enable function calling
-PromptExecutionSettings settings = new() { FunctionChoiceBehavior = FunctionChoiceBehavior.Auto() };
+// ─── DI: shared singletons + tools ────────────────────────────────────────────
 
-builder.Services.AddSingleton(kernel);
 builder.Services.AddSingleton(settings);
+builder.Services.AddSingleton(ai);
+builder.Services.AddSingleton(store);
+builder.Services.AddSingleton<QueryDbTool>();
+builder.Services.AddSingleton<KnowledgeBaseTool>();
+
+// IChatClient used by the unified MAF agent.
+builder.Services.AddChatClient(AzureAIChatClientFactory.Create(settings));
+
+// ─── Register the unified ContactCenter agent ─────────────────────────────────
+
+var instructionsPath = Path.Combine(AppContext.BaseDirectory, "Prompts", "ContactCenterAgent.md");
+var instructions     = await File.ReadAllTextAsync(instructionsPath);
+
+builder.AddAIAgent(
+        name:         "ContactCenter",
+        instructions: instructions)
+    .WithAITool(sp => AIFunctionFactory.Create(
+        sp.GetRequiredService<QueryDbTool>().ExecuteSqlAsync))
+    .WithAITool(sp => AIFunctionFactory.Create(
+        sp.GetRequiredService<KnowledgeBaseTool>().SearchKnowledgeBaseAsync));
+
+// ─── DevUI services ───────────────────────────────────────────────────────────
+
+builder.Services.AddOpenAIResponses();
+builder.Services.AddOpenAIConversations();
+builder.Services.AddDevUI();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline
-if (app.Environment.IsDevelopment())
-{
-    app.UseDeveloperExceptionPage();
-    app.UseSwagger();
-    app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "FSI Contact Center PoC API v1"));    
-}
+app.MapOpenAIResponses();
+app.MapOpenAIConversations();
+app.MapDevUI();
 
-app.UseHttpsRedirection();
-app.UseAuthorization();
-app.MapControllers();
+Console.WriteLine(new string('═', 60));
+Console.WriteLine("  RpContactCenterApi  —  ContactCenter DevUI");
+Console.WriteLine("  http://localhost:8888/devui");
+Console.WriteLine(new string('═', 60));
 
-app.Run();
+await app.RunAsync();
