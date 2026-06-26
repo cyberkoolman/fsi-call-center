@@ -1,0 +1,13 @@
+{
+    "IsEncrypted": false,
+    "Values": {
+        "AzureWebJobsStorage__blobServiceUri": "https://rpresearchstorage.blob.core.windows.net",
+        "AzureWebJobsStorage__queueServiceUri": "https://rpresearchstorage.queue.core.windows.net",
+        "AzureWebJobsStorage__tableServiceUri": "https://rpresearchstorage.table.core.windows.net",
+        "AzureWebJobsSecretStorageType": "files",
+        "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+        "APPLICATIONINSIGHTS_CONNECTION_STRING": "InstrumentationKey=abf0a76f-9f31-4900-a83a-1c76ed7557ea",
+        "SpeechToTextApiUrl": "https://rp-ai-agent-service.cognitiveservices.azure.com/speechtotext/transcriptions:transcribe?api-version=2024-11-15",
+        "SpeechToTextApiKey": "<your-key-here>"
+    }
+}

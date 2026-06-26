@@ -69,6 +69,22 @@ upload.cmd
 
 You'll see the function fire and the transcript logged to the console.
 
+## Fast Transcription over Whisper (Why)
+
+This project uses the **Azure AI Speech Fast Transcription** API rather than OpenAI Whisper. Here's why:
+
+| | Fast Transcription (this project) | Whisper (Azure OpenAI) |
+|---|---|---|
+| **Endpoint** | `/speechtotext/transcriptions:transcribe` | `/openai/deployments/{name}/audio/transcriptions` |
+| **Model** | Microsoft's proprietary speech models | OpenAI's Whisper |
+| **Max file size** | ~300 MB | ~25 MB |
+| **Max duration** | 2 hours | ~2 hours |
+| **Features** | Diarization, word-level timestamps, language ID | Simpler output, translation built-in |
+| **Pricing** | Per audio hour (Speech tier) | Per audio minute (OpenAI tier) |
+
+Fast Transcription is the better fit for call-center audio: it handles large files, provides speaker diarization out of the box, and returns results synchronously — no async polling needed.
+
+
 ## Files
 
 | File | Role |
