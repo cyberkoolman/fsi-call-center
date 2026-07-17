@@ -32,11 +32,40 @@ public sealed class RagWorkflowChatClient : IChatClient
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var chunks = new List<string>();
-        await foreach (var update in GetStreamingResponseAsync(chatMessages, options, cancellationToken))
-            if (update.Text is { } t) chunks.Add(t);
+        var userText = chatMessages
+            .LastOrDefault(m => m.Role == ChatRole.User)?.Text?.Trim() ?? "";
 
-        return new ChatResponse(new ChatMessage(ChatRole.Assistant, string.Concat(chunks)));
+        if (string.IsNullOrWhiteSpace(userText))
+            return new ChatResponse([new ChatMessage(ChatRole.Assistant, "Please ask a question about the Contoso knowledge base.")]);
+
+        Console.WriteLine($"\n[ContosoKB] Query: {userText}");
+
+        AnswerResult? answerResult = null;
+        await using var run = await InProcessExecution.RunStreamingAsync(_workflow, new UserQuery(userText));
+
+        await foreach (var evt in run.WatchStreamAsync())
+        {
+            if (evt is WorkflowOutputEvent outputEvent && outputEvent.Data is AnswerResult ar)
+            {
+                answerResult = ar;
+                break;
+            }
+        }
+
+        var answer = answerResult?.Text ?? "The knowledge base did not produce an answer.";
+        var response = new ChatResponse([new ChatMessage(ChatRole.Assistant, answer)]);
+
+        if (answerResult is not null && answerResult.TotalTokens > 0)
+        {
+            response.Usage = new UsageDetails
+            {
+                InputTokenCount = answerResult.InputTokens,
+                OutputTokenCount = answerResult.OutputTokens,
+                TotalTokenCount = answerResult.TotalTokens
+            };
+        }
+
+        return response;
     }
 
     public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
@@ -44,41 +73,27 @@ public sealed class RagWorkflowChatClient : IChatClient
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var userText = chatMessages
-            .LastOrDefault(m => m.Role == ChatRole.User)?.Text?.Trim() ?? "";
-
-        if (string.IsNullOrWhiteSpace(userText))
-        {
-            yield return Text("Please ask a question about the Contoso knowledge base.");
-            yield break;
-        }
-
-        Console.WriteLine($"\n[ContosoKB] Query: {userText}");
-
-        string? answer = null;
-        await using var run = await InProcessExecution.RunStreamingAsync(_workflow, new UserQuery(userText));
-
-        await foreach (var evt in run.WatchStreamAsync())
-        {
-            if (evt is WorkflowOutputEvent outputEvent)
-            {
-                answer = outputEvent.Data as string;
-                break;
-            }
-        }
-
-        answer ??= "The knowledge base did not produce an answer.";
+        var response = await GetResponseAsync(chatMessages, options, ct);
+        var answer = response.Text ?? "";
 
         var sentences = answer.Split([". ", ".\n"], StringSplitOptions.None);
         for (int i = 0; i < sentences.Length; i++)
         {
             var chunk = i < sentences.Length - 1 ? sentences[i] + ". " : sentences[i];
             if (string.IsNullOrWhiteSpace(chunk)) continue;
-            yield return new ChatResponseUpdate
+
+            var update = new ChatResponseUpdate
             {
                 Role = ChatRole.Assistant,
                 Contents = [new TextContent(chunk)]
             };
+
+            if (i == sentences.Length - 1 && response.Usage is not null)
+            {
+                update.Contents.Add(new UsageContent(response.Usage));
+            }
+
+            yield return update;
             await Task.Delay(25, ct);
         }
     }
@@ -86,10 +101,4 @@ public sealed class RagWorkflowChatClient : IChatClient
     public object? GetService(Type serviceType, object? key = null) => null;
 
     public void Dispose() { }
-
-    private static ChatResponseUpdate Text(string text) => new()
-    {
-        Role = ChatRole.Assistant,
-        Contents = [new TextContent(text)]
-    };
 }

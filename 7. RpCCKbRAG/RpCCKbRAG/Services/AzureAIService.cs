@@ -23,7 +23,7 @@ public class AzureAIService
             : new AzureOpenAIClient(new Uri(_settings.Endpoint), new DefaultAzureCredential());
     }
 
-    public async Task<string> CompleteAsync(
+    public async Task<CompletionResult> CompleteAsync(
         string systemPrompt,
         string userMessage,
         bool useReasoningModel = true,
@@ -39,7 +39,14 @@ public class AzureAIService
         };
 
         var response = await chatClient.CompleteChatAsync(messages, cancellationToken: cancellationToken);
-        return response.Value.Content[0].Text;
+        var text = response.Value.Content[0].Text;
+        var usage = response.Value.Usage;
+
+        return new CompletionResult(
+            text,
+            usage?.InputTokenCount ?? 0,
+            usage?.OutputTokenCount ?? 0,
+            usage?.TotalTokenCount ?? 0);
     }
 
     public async Task<float[]> GenerateEmbeddingAsync(
@@ -79,3 +86,6 @@ public class AzureAIService
         }
     }
 }
+
+/// <summary>Chat completion result with token usage.</summary>
+public record CompletionResult(string Text, int InputTokens, int OutputTokens, int TotalTokens);

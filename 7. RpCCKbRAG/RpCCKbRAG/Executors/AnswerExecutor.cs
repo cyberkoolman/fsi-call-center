@@ -8,7 +8,7 @@ namespace RpCCKbRAG.Executors;
 /// Terminal executor — formats the retrieved chunks into a prompt and emits the
 /// LLM's grounded answer as the workflow output.
 /// </summary>
-[YieldsOutput(typeof(string))]
+[YieldsOutput(typeof(AnswerResult))]
 public sealed class AnswerExecutor : Executor<RetrievedContext>
 {
     private readonly AzureAIService _ai;
@@ -25,7 +25,7 @@ public sealed class AnswerExecutor : Executor<RetrievedContext>
         if (message.Documents.Count == 0)
         {
             const string fallback = "I could not find relevant information in the Contoso knowledge base to answer that question.";
-            await context.YieldOutputAsync(fallback, cancellationToken);
+            await context.YieldOutputAsync(new AnswerResult(fallback, 0, 0, 0), cancellationToken);
             return;
         }
 
@@ -45,13 +45,15 @@ public sealed class AnswerExecutor : Executor<RetrievedContext>
               say so clearly. Do NOT speculate or add outside knowledge.
             """;
 
-        var answer = await _ai.CompleteAsync(
+        var result = await _ai.CompleteAsync(
             SystemPrompt,
             $"Question: {message.Query}\n\nDocuments:\n{docs}\n\nAnswer:",
             useReasoningModel: true,
             cancellationToken);
 
-        Console.WriteLine($"[Answer] {answer.Length} chars produced.");
-        await context.YieldOutputAsync(answer, cancellationToken);
+        Console.WriteLine($"[Answer] {result.Text.Length} chars, {result.TotalTokens} tokens (in={result.InputTokens}, out={result.OutputTokens})");
+        await context.YieldOutputAsync(
+            new AnswerResult(result.Text, result.InputTokens, result.OutputTokens, result.TotalTokens),
+            cancellationToken);
     }
 }
